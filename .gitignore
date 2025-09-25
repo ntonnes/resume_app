@@ -130,15 +130,11 @@ dmypy.json
 
 # Project-specific files
 # Generated resumes and output files
-*.docx
-!resume.docx  # Keep the template file
 generated_resumes/
 output/
 
 # Candidate data files (may contain sensitive info)
-candidate.xlsx
 candidate.txt
-*.xlsx
 !template_*.xlsx  # Keep template Excel files if any
 
 # VS Code settings
