@@ -15,7 +15,7 @@ class ResumeBuilderApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         root.title("Resume Builder Wizard")
-        root.geometry("1400x800")
+        root.state('zoomed')  # Launch in fullscreen on Windows
         root.minsize(1200, 700)
         
         # Application state
@@ -30,6 +30,10 @@ class ResumeBuilderApp:
         self.skills_data: Dict[str, list] = {}
         self.skill_recommendations: list = []
         self.selected_skills: Dict[str, str] = {}
+        # New refactored skill selection variables
+        self.selected_categories: Set[str] = set()  # Categories selected by user
+        self.filtered_skills: Dict[str, list] = {}  # Skills filtered by selected categories
+        self.skill_sections: Dict[str, Dict] = {}  # Store data for each of 4 skill sections
         
         # Selection requirements (role -> count)
         self.selection_requirements = {
@@ -222,8 +226,8 @@ Tips:
     def _create_recommendations_panel(self) -> ttk.Frame:
         """Create the recommendations panel."""
         panel = ttk.Frame(self.notebook, padding=10)
-        panel.columnconfigure(0, weight=3)  # More space for bullets
-        panel.columnconfigure(1, weight=1)  # Less space for job description
+        panel.columnconfigure(0, weight=7)  # Much more space for bullets
+        panel.columnconfigure(1, weight=3)   # Minimal space for job description
         panel.rowconfigure(0, weight=1)
         
         # Left side - bullet recommendations
@@ -238,7 +242,11 @@ Tips:
         
         instruction_text = f"Required selections: {self.selection_requirements['Nodelink']} Nodelink, {self.selection_requirements['MAMM']} MAMM, {self.selection_requirements['FactCheckAI']} FactCheckAI, {self.selection_requirements['Medical Classifier']} Medical"
         instruction_label = ttk.Label(left_frame, text=instruction_text, font=("Arial", 9), foreground="blue")
-        instruction_label.grid(row=0, column=0, pady=(20, 10), sticky="w")
+        instruction_label.grid(row=0, column=0, pady=(20, 5), sticky="w")
+        
+        # Line count status
+        self.line_count_label = ttk.Label(left_frame, text="Total Lines: 0/21", font=("Arial", 10, "bold"))
+        self.line_count_label.grid(row=0, column=0, pady=(45, 10), sticky="w")
         
         # Scrollable frame for recommendations
         self.recs_canvas = tk.Canvas(left_frame)
@@ -262,11 +270,12 @@ Tips:
         right_frame.columnconfigure(0, weight=1)
         right_frame.rowconfigure(0, weight=1)
         
-        self.jd_display = tk.Text(right_frame, wrap=tk.WORD, state="disabled")
+        self.jd_display = tk.Text(right_frame, wrap=tk.WORD, state="disabled", width=15, height=10)
+        self.jd_display.configure(font=("Arial", 8))  # Smaller font to fit more in less space
         jd_scrollbar = ttk.Scrollbar(right_frame, orient="vertical", command=self.jd_display.yview)
         self.jd_display.configure(yscrollcommand=jd_scrollbar.set)
         
-        self.jd_display.grid(row=0, column=0, sticky="nsew")
+        self.jd_display.grid(row=0, column=0, sticky="nsew", ipadx=0, ipady=0)
         jd_scrollbar.grid(row=0, column=1, sticky="ns")
         
         # Enable mouse wheel scrolling for job description display
@@ -321,37 +330,58 @@ Tips:
             if not items:
                 continue
                 
-            # Role frame
-            role_frame = ttk.LabelFrame(self.recs_frame, text=f"{role} (Select {self.selection_requirements[role]})", padding=10)
-            role_frame.pack(fill="x", padx=5, pady=5)
+            # Role frame with enhanced styling and more prominent separation
+            role_frame = ttk.LabelFrame(self.recs_frame, text="", padding=20, relief="solid", borderwidth=2)
+            role_frame.pack(fill="x", padx=10, pady=15)
             role_frame.columnconfigure(0, weight=1)
             
-            # Create bullet checkboxes
+            # Add prominent role title
+            role_title = ttk.Label(role_frame, text=f"{role}", font=("Arial", 16, "bold"), foreground="darkblue")
+            role_title.grid(row=0, column=0, sticky="w", pady=(0, 5))
+            
+            # Add selection requirement subtitle
+            requirement_label = ttk.Label(role_frame, text=f"Select {self.selection_requirements[role]} bullet points", 
+                                        font=("Arial", 10, "italic"), foreground="gray")
+            requirement_label.grid(row=1, column=0, sticky="w", pady=(0, 15))
+            
+            # Pre-select first x bullets for each role
+            required_count = self.selection_requirements[role]
+            
+            # Create bullet checkboxes (starting from row 2 after title and subtitle)
             for idx, item in enumerate(items):
-                bullet_frame = ttk.Frame(role_frame)
-                bullet_frame.grid(row=idx, column=0, sticky="ew", pady=2)
-                bullet_frame.columnconfigure(1, weight=1)  # Allow text to expand
+                # Enhanced bullet frame with border
+                bullet_frame = ttk.Frame(role_frame, relief="solid", borderwidth=1)
+                bullet_frame.grid(row=idx+2, column=0, sticky="ew", pady=3, padx=2)
+                bullet_frame.columnconfigure(2, weight=1)
                 
-                # Checkbox
-                var = tk.BooleanVar()
+                # Checkbox - pre-select first required bullets
+                var = tk.BooleanVar(value=(idx < required_count))
                 checkbox = ttk.Checkbutton(bullet_frame, variable=var, 
                     command=lambda r=role, i=idx, v=var: self._on_bullet_selection(r, i, v))
-                checkbox.grid(row=0, column=0, sticky="w")
+                checkbox.grid(row=0, column=0, sticky="w", padx=(5, 0), pady=5)
+                
+                # Pre-select the bullet
+                if idx < required_count:
+                    self.selected_bullets.setdefault(role, set()).add(idx)
                 
                 # Score and lines info
                 score = item.get("score", 0)
                 lines = item.get("lines", "?")
                 info_text = f"[Score: {score:.0f}, Lines: {lines}]"
-                info_label = ttk.Label(bullet_frame, text=info_text, font=("Arial", 8), foreground="gray")
-                info_label.grid(row=0, column=1, sticky="w", padx=(5, 0))
+                info_label = ttk.Label(bullet_frame, text=info_text, font=("Arial", 8, "bold"), foreground="darkblue")
+                info_label.grid(row=0, column=1, sticky="w", padx=(10, 5), pady=5)
                 
-                # Bullet text - make it fully visible with proper wrapping
+                # Bullet text with better styling
                 bullet_text = item.get("bullet", "")
-                bullet_label = ttk.Label(bullet_frame, text=bullet_text, wraplength=800, justify="left")
-                bullet_label.grid(row=1, column=0, columnspan=2, sticky="ew", padx=(20, 0), pady=(2, 5))
+                bullet_label = ttk.Label(bullet_frame, text=bullet_text, wraplength=900, justify="left", 
+                                       font=("Arial", 9), background="white", relief="flat", padding=5)
+                bullet_label.grid(row=1, column=0, columnspan=3, sticky="ew", padx=5, pady=(0, 5))
                 
                 # Color coding based on score
                 self._apply_bullet_color_coding(bullet_label, score, items)
+        
+        # Update line count after pre-selection
+        self._update_line_count()
     
     def _apply_bullet_color_coding(self, label, score, all_items):
         """Apply color coding to bullet based on score."""
@@ -388,47 +418,70 @@ Tips:
                 selected_set.add(bullet_idx)
         else:  # Deselected
             selected_set.discard(bullet_idx)
+        
+        # Update line count display
+        self._update_line_count()
+    
+    def _update_line_count(self):
+        """Update the total line count display."""
+        total_lines = 0
+        
+        for role, selected_indices in self.selected_bullets.items():
+            bullets = self.recs.get(role, [])
+            for idx in selected_indices:
+                if idx < len(bullets):
+                    lines = bullets[idx].get("lines", 0)
+                    if isinstance(lines, (int, float)):
+                        total_lines += int(lines)
+        
+        # Update label with color coding
+        self.line_count_label.config(text=f"Total Lines: {total_lines}/21")
+        
+        if total_lines == 21:
+            self.line_count_label.config(foreground="green")
+        elif total_lines > 21:
+            self.line_count_label.config(foreground="red")
+        else:
+            self.line_count_label.config(foreground="orange")
     
     def _create_skills_selection_panel(self) -> ttk.Frame:
-        """Create the skills selection panel."""
+        """Create the refactored skills selection panel."""
         panel = ttk.Frame(self.notebook, padding=20)
-        panel.columnconfigure(0, weight=3)  # Skills area takes more space
-        panel.columnconfigure(1, weight=2)  # Job description area
+        panel.columnconfigure(0, weight=7)  # Skills area takes much more space
+        panel.columnconfigure(1, weight=2)   # Minimal job description area
         panel.rowconfigure(1, weight=1)
         
         # Title
         title_label = ttk.Label(panel, text="Select Skills", font=("Arial", 16, "bold"))
         title_label.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 20))
         
-        # Left side: Skills selection with better layout
+        # Left side: Skills selection
         skills_main_frame = ttk.LabelFrame(panel, text="Skills Selection", padding=15)
         skills_main_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 15))
         skills_main_frame.columnconfigure(0, weight=1)
-        skills_main_frame.rowconfigure(2, weight=1)  # Make skills area expandable
+        skills_main_frame.rowconfigure(1, weight=1)
         
-        # Instructions (fixed at top)
-        instruction_text = ("Select categories and skills for your resume. Each skill line must be under 50 characters total.\n"
-                          "Choose from existing categories or create new ones.")
-        instruction_label = ttk.Label(skills_main_frame, text=instruction_text, font=("Arial", 10), wraplength=500)
-        instruction_label.grid(row=0, column=0, sticky="ew", pady=(0, 15))
+        # Category selection frame
+        categories_frame = ttk.LabelFrame(skills_main_frame, text="Select Relevant Categories", padding=10)
+        categories_frame.grid(row=0, column=0, sticky="ew", pady=(0, 15))
+        categories_frame.columnconfigure(0, weight=1)
         
-        # Load skills button (fixed)
-        load_skills_btn = ttk.Button(skills_main_frame, text="Load Recommended Skills", command=self._load_skills)
-        load_skills_btn.grid(row=1, column=0, sticky="w", pady=(0, 15))
+        self.categories_frame = categories_frame  # Store reference for population
         
-        # Skills content area - with scrolling capability when needed
+        # Skills sections - scrollable
         skills_outer_frame = ttk.Frame(skills_main_frame)
-        skills_outer_frame.grid(row=2, column=0, sticky="nsew")
+        skills_outer_frame.grid(row=1, column=0, sticky="nsew")
         skills_outer_frame.columnconfigure(0, weight=1)
         skills_outer_frame.rowconfigure(0, weight=1)
         
-        # Canvas and scrollbar for when content is too tall
+        # Canvas and scrollbar for skills sections
         skills_canvas = tk.Canvas(skills_outer_frame)
         skills_scrollbar = ttk.Scrollbar(skills_outer_frame, orient="vertical", command=skills_canvas.yview)
         skills_canvas.configure(yscrollcommand=skills_scrollbar.set)
         
         self.skills_content_frame = ttk.Frame(skills_canvas)
         self.skills_content_frame.columnconfigure(0, weight=1)
+        self.skills_content_frame.columnconfigure(1, weight=1)  # Two columns for skill sections
         
         # Bind scrolling configuration
         self.skills_content_frame.bind('<Configure>', 
@@ -438,32 +491,31 @@ Tips:
         skills_canvas.grid(row=0, column=0, sticky="nsew")
         skills_scrollbar.grid(row=0, column=1, sticky="ns")
         
-        # Enable mouse wheel scrolling for skills
+        # Enable mouse wheel scrolling
         self._bind_mouse_wheel(self.skills_content_frame, skills_canvas)
         
-        # Right side: Job description with improved layout
+        # Right side: Job description
         jd_frame = ttk.LabelFrame(panel, text="Job Description Reference", padding=15)
         jd_frame.grid(row=1, column=1, sticky="nsew")
         jd_frame.columnconfigure(0, weight=1)
         jd_frame.rowconfigure(1, weight=1)
         
-        jd_label = ttk.Label(jd_frame, text="Use this as reference for skill selection:", font=("Arial", 10, "bold"))
+        jd_label = ttk.Label(jd_frame, text="Use this as reference:", font=("Arial", 10, "bold"))
         jd_label.grid(row=0, column=0, sticky="w", pady=(0, 10))
         
-        # Job description text area (read-only) with better sizing
         jd_text_frame = ttk.Frame(jd_frame)
         jd_text_frame.grid(row=1, column=0, sticky="nsew")
         jd_text_frame.columnconfigure(0, weight=1)
         jd_text_frame.rowconfigure(0, weight=1)
         
-        self.skills_jd_text = tk.Text(jd_text_frame, wrap=tk.WORD, state="disabled", font=("Arial", 9))
+        self.skills_jd_text = tk.Text(jd_text_frame, wrap=tk.WORD, state="disabled", font=("Arial", 9), width=20, height=15)
         jd_scrollbar = ttk.Scrollbar(jd_text_frame, orient="vertical", command=self.skills_jd_text.yview)
         self.skills_jd_text.configure(yscrollcommand=jd_scrollbar.set)
         
         self.skills_jd_text.grid(row=0, column=0, sticky="nsew")
         jd_scrollbar.grid(row=0, column=1, sticky="ns")
         
-        # Enable mouse wheel scrolling for skills job description
+        # Enable mouse wheel scrolling
         def skills_jd_mousewheel(event):
             self.skills_jd_text.yview_scroll(int(-1 * (event.delta / 120)), "units")
         self.skills_jd_text.bind("<MouseWheel>", skills_jd_mousewheel)
@@ -471,11 +523,7 @@ Tips:
         return panel
     
     def _populate_skills_panel(self):
-        """Populate the skills panel with recommendations."""
-        # Clear existing content
-        for widget in self.skills_content_frame.winfo_children():
-            widget.destroy()
-        
+        """Populate the new refactored skills panel."""
         # Populate job description text
         if hasattr(self, 'skills_jd_text'):
             self.skills_jd_text.config(state="normal")
@@ -483,145 +531,178 @@ Tips:
             self.skills_jd_text.insert("1.0", self.jd_text)
             self.skills_jd_text.config(state="disabled")
         
-        if not self.skill_recommendations:
-            # Show message if no recommendations
-            no_skills_label = ttk.Label(
-                self.skills_content_frame,
-                text="No skill recommendations available. Make sure your Excel file has a 'Skills' sheet.",
-                font=("Arial", 12)
-            )
-            no_skills_label.grid(row=0, column=0, pady=20)
+        # Clear existing content
+        for widget in self.categories_frame.winfo_children():
+            widget.destroy()
+        for widget in self.skills_content_frame.winfo_children():
+            widget.destroy()
+        
+        # Populate category selection checkboxes
+        if self.skills_data:
+            all_categories = set()
+            for skill_categories in self.skills_data.values():
+                all_categories.update(skill_categories)
+            all_categories = sorted(list(all_categories))
+            
+            ttk.Label(self.categories_frame, text="Select relevant categories:", font=("Arial", 10, "bold")).pack(anchor="w", pady=(0, 10))
+            
+            # Create category checkboxes in a 5-column grid
+            categories_grid_frame = ttk.Frame(self.categories_frame)
+            categories_grid_frame.pack(fill="x")
+            
+            self.category_vars = {}
+            max_cols = 8  # Changed to 8 columns
+            for i, category in enumerate(all_categories):
+                var = tk.BooleanVar()
+                checkbox = ttk.Checkbutton(categories_grid_frame, text=category, variable=var, 
+                                         command=self._update_filtered_skills)
+                row = i // max_cols
+                col = i % max_cols
+                checkbox.grid(row=row, column=col, sticky="w", padx=8, pady=2)
+                self.category_vars[category] = var
+            
+            # Update filtered skills initially
+            self._update_filtered_skills()
+        
+        # Create 4 skill sections
+        self._create_skill_sections()
+    
+    def _update_filtered_skills(self):
+        """Update the filtered skills based on selected categories."""
+        self.selected_categories = {cat for cat, var in self.category_vars.items() if var.get()}
+        
+        # Filter skills that belong to at least one selected category
+        self.filtered_skills = {}
+        for skill, categories in self.skills_data.items():
+            if any(cat in self.selected_categories for cat in categories):
+                self.filtered_skills[skill] = categories
+        
+        # Update skill sections with filtered skills
+        if hasattr(self, 'skill_sections'):
+            self._update_skill_sections()
+    
+    def _create_skill_sections(self):
+        """Create the 4 skill sections in 2 columns."""
+        # Section header spanning both columns
+        header_frame = ttk.Frame(self.skills_content_frame)
+        header_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 15))
+        ttk.Label(header_frame, text="Configure Skills for Resume", font=("Arial", 12, "bold")).pack()
+        
+        # Initialize skill sections storage
+        self.skill_sections = {}
+        
+        for i in range(4):
+            section_key = f"SKILL_{i+1}"
+            
+            # Calculate position in 2-column layout
+            row = (i // 2) + 1  # Two sections per row, starting from row 1
+            col = i % 2         # Alternate between columns 0 and 1
+            
+            # Create section frame
+            section_frame = ttk.LabelFrame(self.skills_content_frame, text=f"Skill Section {i+1}", padding=15)
+            section_frame.grid(row=row, column=col, sticky="ew", pady=10, padx=5)
+            section_frame.columnconfigure(1, weight=1)
+            
+            # Custom category name entry
+            ttk.Label(section_frame, text="Category Name for Resume:", font=("Arial", 10, "bold")).grid(row=0, column=0, sticky="w", padx=(0, 10))
+            category_name_var = tk.StringVar()
+            category_entry = ttk.Entry(section_frame, textvariable=category_name_var, width=30)
+            category_entry.grid(row=0, column=1, sticky="w", pady=5)
+            
+            # Skills selection area
+            ttk.Label(section_frame, text="Select Skills:", font=("Arial", 10, "bold")).grid(row=1, column=0, sticky="nw", padx=(0, 10), pady=(10, 0))
+            
+            # Scrollable skills frame
+            skills_container = ttk.Frame(section_frame)
+            skills_container.grid(row=1, column=1, sticky="ew", pady=10)
+            skills_container.columnconfigure(0, weight=1)
+            
+            # Character count and validation
+            char_count_label = ttk.Label(section_frame, text="Characters: 0/50", font=("Arial", 9))
+            char_count_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(5, 0))
+            
+            # Store section data
+            self.skill_sections[section_key] = {
+                'frame': section_frame,
+                'category_name_var': category_name_var,
+                'skills_container': skills_container,
+                'char_count_label': char_count_label,
+                'skill_vars': {},
+                'category_entry': category_entry
+            }
+            
+            # Bind category name changes to update character count
+            category_name_var.trace_add("write", lambda *args, key=section_key: self._update_section_char_count(key))
+        
+        # Initial update of skill sections
+        self._update_skill_sections()
+    
+    def _update_skill_sections(self):
+        """Update all skill sections with filtered skills."""
+        if not hasattr(self, 'skill_sections'):
             return
         
-        # Get all unique categories from skills data
-        all_categories = set()
-        for skill_categories in self.skills_data.values():
-            all_categories.update(skill_categories)
-        all_categories = sorted(list(all_categories))
-        
-        # Create skill selection widgets
-        self.skill_widgets = {}
-        
-        for i in range(4):  # Always create 4 skill slots
-            # Create frame for this skill category
-            skill_frame = ttk.LabelFrame(
-                self.skills_content_frame,
-                text=f"SKILL_{i+1}",
-                padding=15
-            )
-            skill_frame.grid(row=i, column=0, sticky="ew", pady=10, padx=5)
-            skill_frame.columnconfigure(1, weight=1)
+        for section_key, section_data in self.skill_sections.items():
+            # Clear existing skills
+            for widget in section_data['skills_container'].winfo_children():
+                widget.destroy()
             
-            # Get recommended category and skills (if available)
-            if i < len(self.skill_recommendations):
-                rec_category, rec_skills = self.skill_recommendations[i]
-            else:
-                rec_category, rec_skills = ("", [])
+            section_data['skill_vars'] = {}
             
-            # Category selection with dropdown and custom entry
-            ttk.Label(skill_frame, text="Category:", font=("Arial", 10, "bold")).grid(row=0, column=0, sticky="w", padx=(0, 10))
-            
-            category_frame = ttk.Frame(skill_frame)
-            category_frame.grid(row=0, column=1, sticky="ew", pady=2)
-            category_frame.columnconfigure(1, weight=1)
-            
-            # Dropdown for existing categories with improved styling
-            category_var = tk.StringVar(value=rec_category)
-            category_combo = ttk.Combobox(category_frame, textvariable=category_var, values=all_categories, width=25, state="readonly")
-            category_combo.grid(row=0, column=0, sticky="w", padx=(0, 10))
-            
-            # "Or create new" entry with better prompt
-            ttk.Label(category_frame, text="or create new:").grid(row=0, column=1, sticky="w", padx=(0, 5))
-            new_category_var = tk.StringVar()
-            new_category_entry = ttk.Entry(category_frame, textvariable=new_category_var, width=20, 
-                                         font=("Arial", 9))
-            new_category_entry.grid(row=0, column=2, sticky="w")
-            
-            # Add placeholder text behavior
-            def on_focus_in(event, entry=new_category_entry):
-                if entry.get() == "Enter custom category...":
-                    entry.delete(0, tk.END)
-                    entry.config(foreground="black")
-            
-            def on_focus_out(event, entry=new_category_entry):
-                if not entry.get():
-                    entry.insert(0, "Enter custom category...")
-                    entry.config(foreground="gray")
-            
-            new_category_entry.bind("<FocusIn>", on_focus_in)
-            new_category_entry.bind("<FocusOut>", on_focus_out)
-            new_category_entry.insert(0, "Enter custom category...")
-            new_category_entry.config(foreground="gray")
-            
-            # Skills selection
-            ttk.Label(skill_frame, text="Skills:", font=("Arial", 10, "bold")).grid(row=1, column=0, sticky="w", padx=(0, 10), pady=(15, 5))
-            
-            # Get all available skills
-            all_skills = sorted(list(self.skills_data.keys()))
-            
-            # Skills selection frame - simplified layout without nested scrolling
-            skills_display_frame = ttk.Frame(skill_frame)
-            skills_display_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=5)
-            skills_display_frame.columnconfigure(0, weight=1)
-            
-            # Create checkboxes for skills in a compact grid (max 4 columns)
-            skill_vars = {}
-            max_cols = 4
-            for j, skill in enumerate(all_skills):
-                var = tk.BooleanVar(value=skill in rec_skills)
-                checkbox = ttk.Checkbutton(skills_display_frame, text=skill, variable=var)
-                row = j // max_cols
-                col = j % max_cols
-                checkbox.grid(row=row, column=col, sticky="w", padx=8, pady=1)
-                skill_vars[skill] = var
-            
-            # Character count display
-            char_count_label = ttk.Label(skill_frame, text="Characters: 0/50", font=("Arial", 9))
-            char_count_label.grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
-            
-            # Update character count when category or skills change
-            def create_update_function(skill_key, cat_var, new_cat_var, skill_vars_dict, char_label):
-                def update_char_count(*args):
-                    category = new_cat_var.get().strip() or cat_var.get().strip()
-                    selected_skills = [skill for skill, var in skill_vars_dict.items() if var.get()]
-                    
-                    if category and selected_skills:
-                        # Truncate skills if necessary to fit under 50 chars
-                        formatted = self._format_skill_with_limit(category, selected_skills, 50)
-                        char_count = len(formatted)
-                        char_label.config(text=f"Characters: {char_count}/50")
-                        
-                        # Color code based on length
-                        if char_count > 50:
-                            char_label.config(foreground="red")
-                        elif char_count > 45:
-                            char_label.config(foreground="orange")
-                        else:
-                            char_label.config(foreground="green")
-                    else:
-                        char_label.config(text="Characters: 0/50", foreground="black")
+            if self.filtered_skills:
+                # Create checkboxes for filtered skills in a grid
+                max_cols = 3
+                sorted_skills = sorted(self.filtered_skills.keys())
                 
-                return update_char_count
+                for i, skill in enumerate(sorted_skills):
+                    var = tk.BooleanVar()
+                    checkbox = ttk.Checkbutton(
+                        section_data['skills_container'], 
+                        text=skill, 
+                        variable=var,
+                        command=lambda key=section_key: self._update_section_char_count(key)
+                    )
+                    row = i // max_cols
+                    col = i % max_cols
+                    checkbox.grid(row=row, column=col, sticky="w", padx=8, pady=2)
+                    section_data['skill_vars'][skill] = var
+            else:
+                # Show message when no categories selected
+                msg_label = ttk.Label(
+                    section_data['skills_container'], 
+                    text="← Select categories above to see available skills",
+                    font=("Arial", 9),
+                    foreground="gray"
+                )
+                msg_label.grid(row=0, column=0, sticky="w", pady=10)
             
-            update_func = create_update_function(f"SKILL_{i+1}", category_var, new_category_var, skill_vars, char_count_label)
+            # Update character count
+            self._update_section_char_count(section_key)
+    
+    def _update_section_char_count(self, section_key):
+        """Update character count for a specific skill section."""
+        if section_key not in self.skill_sections:
+            return
+        
+        section_data = self.skill_sections[section_key]
+        category_name = section_data['category_name_var'].get().strip()
+        selected_skills = [skill for skill, var in section_data['skill_vars'].items() if var.get()]
+        
+        if category_name and selected_skills:
+            from .skill_recommender import format_skill_for_template
+            formatted = format_skill_for_template(category_name, selected_skills)
+            char_count = len(formatted)
             
-            # Bind update function to changes
-            category_var.trace_add("write", update_func)
-            new_category_var.trace_add("write", update_func)
-            for var in skill_vars.values():
-                var.trace_add("write", update_func)
-            
-            # Initial update
-            update_func()
-            
-            # Store references
-            self.skill_widgets[f"SKILL_{i+1}"] = {
-                'category_var': category_var,
-                'new_category_var': new_category_var,
-                'skill_vars': skill_vars,
-                'char_count_label': char_count_label,
-                'frame': skill_frame
-            }
+            # Update label with color coding
+            section_data['char_count_label'].config(text=f"Characters: {char_count}/50")
+            if char_count > 50:
+                section_data['char_count_label'].config(foreground="red")
+            elif char_count > 45:
+                section_data['char_count_label'].config(foreground="orange")
+            else:
+                section_data['char_count_label'].config(foreground="green")
+        else:
+            section_data['char_count_label'].config(text="Characters: 0/50", foreground="black")
     
     def _create_review_panel(self) -> ttk.Frame:
         """Create the review panel."""
@@ -631,18 +712,24 @@ Tips:
         
         # Title
         title_label = ttk.Label(panel, text="Review & Generate Resume", font=("Arial", 16, "bold"))
-        title_label.grid(row=0, column=0, pady=(0, 20))
+        title_label.grid(row=0, column=0, pady=(0, 20), sticky="ew")
         
-        # Scrollable review area
-        review_canvas = tk.Canvas(panel)
-        review_scrollbar = ttk.Scrollbar(panel, orient="vertical", command=review_canvas.yview)
+        # Scrollable review area - takes full width
+        review_container = ttk.Frame(panel)
+        review_container.grid(row=1, column=0, sticky="nsew")
+        review_container.columnconfigure(0, weight=1)
+        review_container.rowconfigure(0, weight=1)
+        
+        review_canvas = tk.Canvas(review_container)
+        review_scrollbar = ttk.Scrollbar(review_container, orient="vertical", command=review_canvas.yview)
         review_canvas.configure(yscrollcommand=review_scrollbar.set)
         
         self.review_frame = ttk.Frame(review_canvas)
+        self.review_frame.columnconfigure(0, weight=1)  # Allow full width expansion
         review_canvas.create_window((0, 0), window=self.review_frame, anchor="nw")
         
-        review_canvas.grid(row=1, column=0, sticky="nsew")
-        review_scrollbar.grid(row=1, column=1, sticky="ns")
+        review_canvas.grid(row=0, column=0, sticky="nsew")
+        review_scrollbar.grid(row=0, column=1, sticky="ns")
         
         self.review_frame.bind('<Configure>', lambda e: review_canvas.configure(scrollregion=review_canvas.bbox('all')))
         
@@ -651,7 +738,7 @@ Tips:
         
         # Generate button
         generate_frame = ttk.Frame(panel)
-        generate_frame.grid(row=2, column=0, columnspan=2, pady=(20, 0))
+        generate_frame.grid(row=2, column=0, pady=(20, 0))
         
         self.generate_btn = ttk.Button(generate_frame, text="Generate Resume", command=self._generate_resume)
         self.generate_btn.pack()
@@ -664,7 +751,7 @@ Tips:
             # Ensure we have an excel path
             if not self.excel_path:
                 raise ValueError("No Excel file selected")
-                
+            
             # Load skills data from Excel
             self.skills_data = load_skills_sheet(self.excel_path)
             
@@ -679,12 +766,22 @@ Tips:
             self._populate_skills_panel()
             
         except Exception as e:
-            messagebox.showwarning("Skills Warning", f"Could not load skills: {e}")
+            error_msg = str(e)
+            print(f"ERROR in _load_skills: {error_msg}")
+            print(f"Exception type: {type(e)}")
+            print(f"Excel path was: {self.excel_path}")
+            
+            if "Skills sheet not found" in error_msg:
+                messagebox.showwarning("Skills Sheet Missing", 
+                    f"Your Excel file doesn't contain a 'Skills' sheet.\n\n{error_msg}\n\n"
+                    "You can still continue without skills recommendations.")
+            else:
+                messagebox.showwarning("Skills Warning", f"Could not load skills: {error_msg}")
             self.skill_recommendations = []
             self._populate_skills_panel()
     
     def _format_skill_with_limit(self, category, skills, limit=50):
-        """Format skills with character limit and indicate truncation."""
+        """Format skills and check character limit without truncation."""
         if not skills:
             return ""
         
@@ -692,71 +789,61 @@ Tips:
         from .skill_recommender import format_skill_for_template
         formatted = format_skill_for_template(category, skills)
         
-        if len(formatted) <= limit:
-            return formatted
-        
-        # If too long, try to truncate skillfully
-        if len(skills) == 1:
-            # Single skill, just truncate
-            available = limit - len(category) - 4  # Account for " ", "[", "]" 
-            if available > 10:  # Minimum skill length
-                truncated_skill = skills[0][:available-3] + "..."
-                return f"{category} [{truncated_skill}]"
-        else:
-            # Multiple skills, remove from end until it fits
-            working_skills = skills.copy()
-            while working_skills and len(format_skill_for_template(category, working_skills)) > limit:
-                working_skills.pop()
-            
-            if working_skills:
-                formatted = format_skill_for_template(category, working_skills)
-                remaining = len(skills) - len(working_skills)
-                if remaining > 0:
-                    # Add indicator of truncation
-                    if len(formatted) + 5 <= limit:  # Space for " +X"
-                        return formatted[:-1] + f" +{remaining}]"
-                return formatted
-        
-        # Fallback - just category
-        return f"{category} [...]"
+        return formatted
     
     def _collect_selected_skills(self):
-        """Collect the currently selected skills from the UI."""
+        """Collect the currently selected skills from the new refactored UI."""
         self.selected_skills.clear()
         
-        if hasattr(self, 'skill_widgets'):
-            for skill_key, widget_data in self.skill_widgets.items():
-                # Get category (from dropdown or custom entry)
-                category = widget_data['category_var'].get()
-                new_category_var = widget_data.get('new_category_var')
-                custom_category = new_category_var.get() if new_category_var else ""
+        if hasattr(self, 'skill_sections'):
+            for skill_key, section_data in self.skill_sections.items():
+                category_name = section_data['category_name_var'].get().strip()
+                selected_skills = [skill for skill, var in section_data['skill_vars'].items() if var.get()]
                 
-                # Use custom category if provided and "Custom" is selected
-                if category == "Custom" and custom_category:
-                    category = custom_category
-                
-                # Get selected skills
-                selected_skill_names = []
-                for skill, var in widget_data['skill_vars'].items():
-                    if var.get():
-                        selected_skill_names.append(skill)
-                
-                # Also check for custom skill entry
-                custom_skill_var = widget_data.get('custom_skill_var')
-                custom_skill = custom_skill_var.get() if custom_skill_var else ""
-                if custom_skill:
-                    selected_skill_names.append(custom_skill)
-                
-                if category and selected_skill_names:
-                    # Use our character-limited formatting
-                    formatted_skill = self._format_skill_with_limit(category, selected_skill_names)
-                    self.selected_skills[skill_key] = formatted_skill
+                if category_name and selected_skills:
+                    from .skill_recommender import format_skill_for_template
+                    formatted_skill = format_skill_for_template(category_name, selected_skills)
+                    # Only add if within character limit
+                    if len(formatted_skill) <= 50:
+                        self.selected_skills[skill_key] = formatted_skill
     
     def _load_review(self):
-        """Load and display selected bullets for review."""
+        """Load and display selected bullets and skills for review in two columns."""
         # Clear previous review content
         for child in self.review_frame.winfo_children():
             child.destroy()
+        
+        # Create main container with full width layout
+        main_container = ttk.Frame(self.review_frame)
+        main_container.pack(fill="both", expand=True, padx=10, pady=10)
+        main_container.columnconfigure(0, weight=1)
+        main_container.columnconfigure(1, weight=1)  # Two equal columns
+        main_container.rowconfigure(1, weight=1)  # Allow content to expand vertically
+        
+        # Summary statistics at the top - spanning both columns
+        stats_frame = ttk.LabelFrame(main_container, text="Selection Summary", padding=15)
+        stats_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 20))
+        
+        # Calculate totals
+        total_bullets = sum(len(self.selected_bullets.get(role, set())) for role in self.selection_requirements.keys())
+        total_lines = 0
+        for role, selected_indices in self.selected_bullets.items():
+            bullets = self.recs.get(role, [])
+            for idx in selected_indices:
+                if idx < len(bullets):
+                    lines = bullets[idx].get("lines", 0)
+                    if isinstance(lines, (int, float)):
+                        total_lines += int(lines)
+        
+        total_skills = len([skill for skill in self.selected_skills.values() if skill.strip()])
+        
+        stats_text = f"Total Bullet Points: {total_bullets} | Total Lines: {total_lines} | Skills Categories: {total_skills}"
+        ttk.Label(stats_frame, text=stats_text, font=("Arial", 12, "bold"), foreground="darkgreen").pack()
+        
+        # Left Column: Bullet Points Section
+        bullets_section = ttk.LabelFrame(main_container, text="Selected Bullet Points", padding=15)
+        bullets_section.grid(row=1, column=0, sticky="nsew", padx=(0, 10), pady=(0, 20))
+        bullets_section.columnconfigure(0, weight=1)
         
         # Roles that need titles
         title_roles = ["Nodelink", "MAMM"]
@@ -766,15 +853,15 @@ Tips:
             if not selected_indices:
                 continue
                 
-            # Role section
-            role_frame = ttk.LabelFrame(self.review_frame, text=role, padding=15)
-            role_frame.pack(fill="x", padx=10, pady=10)
+            # Role section with full width
+            role_frame = ttk.LabelFrame(bullets_section, text=role, padding=15)
+            role_frame.pack(fill="x", padx=5, pady=10)
             role_frame.columnconfigure(1, weight=1)
             
             # Title input for applicable roles
             if role in title_roles:
                 ttk.Label(role_frame, text="Job Title:").grid(row=0, column=0, sticky="w", pady=(0, 10))
-                title_entry = ttk.Entry(role_frame, width=50)
+                title_entry = ttk.Entry(role_frame, width=60)
                 title_entry.grid(row=0, column=1, sticky="ew", pady=(0, 10), padx=(10, 0))
                 
                 # Set default title
@@ -794,11 +881,47 @@ Tips:
                 if bullet_idx < len(bullets):
                     bullet = bullets[bullet_idx]
                     bullet_text = bullet.get("bullet", "")
+                    lines = bullet.get("lines", "?")
                     
-                    bullet_label = ttk.Label(role_frame, text=f"• {bullet_text}", 
-                                           wraplength=700, justify="left")
+                    bullet_label = ttk.Label(role_frame, text=f"• {bullet_text} (Lines: {lines})", 
+                                           wraplength=1200, justify="left", font=("Arial", 9))
                     bullet_label.grid(row=2+i if role in title_roles else 1+i, column=0, 
                                     columnspan=2, sticky="ew", pady=2, padx=(20, 0))
+        
+        # Right Column: Skills Section
+        skills_section = ttk.LabelFrame(main_container, text="Selected Skills", padding=15)
+        skills_section.grid(row=1, column=1, sticky="nsew", padx=(10, 0), pady=(0, 20))
+        skills_section.columnconfigure(0, weight=1)
+        
+        # Collect current skills
+        self._collect_selected_skills()
+        
+        if self.selected_skills:
+            skills_container = ttk.Frame(skills_section)
+            skills_container.pack(fill="x")
+            skills_container.columnconfigure(0, weight=1)
+            
+            row = 0
+            for skill_key, skill_value in self.selected_skills.items():
+                if skill_value and skill_value.strip():
+                    # Parse skill to show category in bold and skills in normal text
+                    skill_frame = ttk.Frame(skills_container)
+                    skill_frame.grid(row=row, column=0, sticky="ew", pady=5, padx=10)
+                    skill_frame.columnconfigure(1, weight=1)
+                    
+                    # Skill number
+                    ttk.Label(skill_frame, text=f"{skill_key}:", font=("Arial", 10, "bold")).grid(row=0, column=0, sticky="w", padx=(0, 10))
+                    
+                    # Skill content with character count
+                    char_count = len(skill_value)
+                    color = "green" if char_count <= 50 else "red"
+                    skill_text = f"{skill_value} ({char_count}/50 chars)"
+                    ttk.Label(skill_frame, text=skill_text, font=("Arial", 10), 
+                             foreground=color, wraplength=1000).grid(row=0, column=1, sticky="ew")
+                    row += 1
+        else:
+            ttk.Label(skills_section, text="No skills selected", font=("Arial", 10, "italic"), 
+                     foreground="gray").pack(pady=10)
     
     def _generate_resume(self):
         """Generate the final resume."""
@@ -823,6 +946,13 @@ Tips:
             return
         
         try:
+            # Debug: Print skill data being passed to template
+            print("=== DEBUG: Template Data for Skills ===")
+            for key, value in template_data.items():
+                if key.startswith("SKILL_"):
+                    print(f"{key}: '{value}'")
+            print("=======================================")
+            
             render_template(self.template_path, template_data, out_path)
             messagebox.showinfo("Success", f"Resume generated successfully!\nSaved to: {out_path}")
         except Exception as e:
@@ -968,14 +1098,33 @@ Tips:
             return self._validate_selections()
         
         elif self.current_panel == 2:
-            # Validate skill selection (optional - can proceed without skills)
+            # Validate skill selection - ensure no skill exceeds 50 characters
             self._collect_selected_skills()
+            
+            # Check if any skill exceeds 50 characters
+            for skill_key, widget_data in getattr(self, 'skill_widgets', {}).items():
+                custom_category = widget_data.get('new_category_var', tk.StringVar()).get().strip()
+                dropdown_category = widget_data.get('category_var', tk.StringVar()).get().strip()
+                category = custom_category if custom_category and custom_category != "Enter custom category..." else dropdown_category
+                
+                if category:
+                    selected_skills = [skill for skill, var in widget_data.get('skill_vars', {}).items() if var.get()]
+                    if selected_skills:
+                        from .skill_recommender import format_skill_for_template
+                        formatted = format_skill_for_template(category, selected_skills)
+                        if len(formatted) > 50:
+                            messagebox.showerror("Skill Character Limit", 
+                                f"Skill category '{category}' exceeds 50 characters ({len(formatted)} chars). "
+                                f"Please remove some skills or shorten the category name.")
+                            return False
+            
             return True
         
         return True
     
     def _validate_selections(self) -> bool:
-        """Validate that required number of bullets are selected."""
+        """Validate that required number of bullets are selected and total lines is exactly 21."""
+        # Check bullet count requirements
         for role, required_count in self.selection_requirements.items():
             selected_count = len(self.selected_bullets.get(role, set()))
             if selected_count != required_count:
@@ -984,6 +1133,25 @@ Tips:
                     f"Please select exactly {required_count} bullet(s) for {role}. Currently selected: {selected_count}"
                 )
                 return False
+        
+        # Check total line count requirement
+        total_lines = 0
+        for role, selected_indices in self.selected_bullets.items():
+            bullets = self.recs.get(role, [])
+            for idx in selected_indices:
+                if idx < len(bullets):
+                    lines = bullets[idx].get("lines", 0)
+                    if isinstance(lines, (int, float)):
+                        total_lines += int(lines)
+        
+        if total_lines != 21:
+            messagebox.showerror(
+                "Line Count Error", 
+                f"Total lines must be exactly 21. Currently selected: {total_lines} lines.\n"
+                f"Please adjust your bullet point selections to reach exactly 21 lines."
+            )
+            return False
+        
         return True
 
 

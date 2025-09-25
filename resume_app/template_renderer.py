@@ -78,13 +78,43 @@ def _render_with_docxtpl(template_path: str, data: Dict[str, object], output_pat
         
         # Render with docxtpl
         tpl = DocxTemplate(tmp_path)
-        tpl.render(data)
+        
+        # Filter out skill data for docxtpl (since we kept skill placeholders as {SKILL_X})
+        filtered_data = {k: v for k, v in data.items() if not k.startswith("SKILL_")}
+        tpl.render(filtered_data)
         tpl.save(output_path)
+        
+        # Now handle skill placeholders with custom formatting
+        _apply_skill_formatting_to_docx(output_path, data)
         
         return output_path
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
+
+
+def _apply_skill_formatting_to_docx(docx_path: str, data: Dict[str, object]):
+    """Apply custom skill formatting to a DOCX file after docxtpl processing."""
+    if not Document:
+        return
+        
+    doc = Document(docx_path)
+    
+    # Process paragraphs
+    for p in doc.paragraphs:
+        if "{" in p.text:
+            _simple_replace_paragraph_text(p, data)
+    
+    # Process tables
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                if "{" in cell.text:
+                    for paragraph in cell.paragraphs:
+                        if "{" in paragraph.text:
+                            _simple_replace_paragraph_text(paragraph, data)
+    
+    doc.save(docx_path)
 
 
 def _convert_placeholders_to_jinja(template_path: str, output_path: str):
@@ -98,19 +128,33 @@ def _convert_placeholders_to_jinja(template_path: str, output_path: str):
     def convert_text(text: str) -> str:
         return placeholder_pattern.sub(lambda m: "{{ " + m.group(1) + " }}", text)
     
-    # Convert paragraphs
+    # Convert paragraphs (but skip skill placeholders)
     for p in doc.paragraphs:
         if "{" in p.text:
-            _simple_replace_paragraph_text(p, {k: "{{ " + k + " }}" for k in re.findall(r"\{([A-Za-z0-9_]+)\}", p.text)})
+            # Don't convert skill placeholders to Jinja2 format - keep them as {SKILL_X}
+            placeholders = re.findall(r"\{([A-Za-z0-9_]+)\}", p.text)
+            conversion_dict = {}
+            for k in placeholders:
+                if not k.startswith("SKILL_"):
+                    conversion_dict[k] = "{{ " + k + " }}"
+            if conversion_dict:
+                _simple_replace_paragraph_text(p, conversion_dict)
     
-    # Convert tables
+    # Convert tables (but skip skill placeholders)
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
                 if "{" in cell.text:
                     for paragraph in cell.paragraphs:
                         if "{" in paragraph.text:
-                            _simple_replace_paragraph_text(paragraph, {k: "{{ " + k + " }}" for k in re.findall(r"\{([A-Za-z0-9_]+)\}", paragraph.text)})
+                            # Don't convert skill placeholders to Jinja2 format
+                            placeholders = re.findall(r"\{([A-Za-z0-9_]+)\}", paragraph.text)
+                            conversion_dict = {}
+                            for k in placeholders:
+                                if not k.startswith("SKILL_"):
+                                    conversion_dict[k] = "{{ " + k + " }}"
+                            if conversion_dict:
+                                _simple_replace_paragraph_text(paragraph, conversion_dict)
     
     doc.save(output_path)
 
@@ -152,11 +196,17 @@ def _simple_replace_paragraph_text(paragraph, data):
     # Check if this looks like a skill placeholder
     has_skill_placeholder = any(f"{{{key}}}" in full_text for key in data.keys() if key.startswith("SKILL_"))
     
+    print(f"DEBUG: Processing paragraph: '{full_text}'")
+    print(f"DEBUG: has_job_title={has_job_title}, has_location_pattern={has_location_pattern}, has_skill_placeholder={has_skill_placeholder}")
+    
     if has_job_title and has_location_pattern:
+        print("DEBUG: Using job title formatting")
         _replace_job_title_with_formatting(paragraph, data)
     elif has_skill_placeholder:
+        print("DEBUG: Using skill formatting")
         _replace_skill_with_formatting(paragraph, data)
     else:
+        print("DEBUG: Using simple text replacement")
         # Use simple replacement for other cases
         _simple_text_replacement(paragraph, data, full_text)
 
@@ -241,13 +291,22 @@ def _replace_skill_with_formatting(paragraph, data):
     
     # Get the full text
     full_text = "".join(run.text for run in paragraph.runs)
+    print(f"DEBUG: _replace_skill_with_formatting called with full_text: '{full_text}'")
     
-    # Find and replace skill placeholders
+    # Find and replace skill placeholders (handle both {KEY} and {{ KEY }} formats)
     new_text = full_text
     for key, value in data.items():
-        placeholder = f"{{{key}}}"
-        if placeholder in new_text and key.startswith("SKILL_"):
-            new_text = new_text.replace(placeholder, str(value))
+        if key.startswith("SKILL_"):
+            # Try both placeholder formats
+            placeholder1 = f"{{{key}}}"  # {SKILL_1}
+            placeholder2 = f"{{{{ {key} }}}}"  # {{ SKILL_1 }}
+            
+            if placeholder1 in new_text:
+                print(f"DEBUG: Replacing {placeholder1} with '{value}'")
+                new_text = new_text.replace(placeholder1, str(value))
+            elif placeholder2 in new_text:
+                print(f"DEBUG: Replacing {placeholder2} with '{value}'")
+                new_text = new_text.replace(placeholder2, str(value))
     
     # Clear existing runs
     for run in paragraph.runs:

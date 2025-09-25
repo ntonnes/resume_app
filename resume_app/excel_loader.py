@@ -109,9 +109,34 @@ def load_skills_sheet(path: str) -> Dict[str, list]:
         Dict mapping skills to their categories
     """
     try:
-        df = pd.read_excel(path, sheet_name="Skills")
+        # First, check what sheets are available
+        all_sheets = pd.ExcelFile(path).sheet_names
+        sheet_names = [str(sheet) for sheet in all_sheets]
+        
+        # Look for Skills sheet (case-insensitive)
+        skills_sheet = None
+        for sheet in all_sheets:
+            if str(sheet).lower() == "skills":
+                skills_sheet = sheet
+                break
+        
+        if skills_sheet is None:
+            raise ValueError(f"Skills sheet not found. Available sheets: {', '.join(sheet_names)}")
+        
+        df = pd.read_excel(path, sheet_name=skills_sheet)
+    except FileNotFoundError:
+        raise ValueError(f"Excel file not found: {path}")
     except Exception as e:
-        raise ValueError(f"Failed to read Skills sheet: {e}")
+        # Check if it's a sheet-specific error
+        if "Skills" in str(e) or "sheet" in str(e).lower():
+            try:
+                all_sheets = pd.ExcelFile(path).sheet_names
+                sheet_names = [str(sheet) for sheet in all_sheets]
+                raise ValueError(f"Could not read Skills sheet. Available sheets: {', '.join(sheet_names)}. Error: {e}")
+            except:
+                raise ValueError(f"Failed to read Skills sheet: {e}")
+        else:
+            raise ValueError(f"Failed to read Excel file: {e}")
     
     if df.empty:
         return {}
