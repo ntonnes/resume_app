@@ -1,10 +1,10 @@
 """Coordinate data sources and produce a tailored resume file."""
 from typing import Dict, Optional
-from .job_parser import parse_job_description
-from .excel_loader import load_candidate_sheet, load_skills_sheet
-from .template_renderer import render_template
-from .recommender import recommend
-from .skill_recommender import SkillRecommender, format_skill_for_template
+from ..data.job_parser import parse_job_description
+from ..data.excel_loader import load_candidate_sheet, load_skills_sheet
+from ..templates.template_renderer import render_template
+from ..ai.recommender import recommend
+from ..ai.skill_recommender import SkillRecommender, format_skill_for_template
 
 
 DEFAULT_COUNTS = {

@@ -1,0 +1,1 @@
+"""Panel components for the user interface."""
